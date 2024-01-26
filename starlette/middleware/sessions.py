@@ -11,40 +11,42 @@ from starlette.requests import HTTPConnection
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 # mutable mapping that keeps track of whether it has been modified
-class ModifiedDict(dict):
-    def __init__(self, *args, **kwargs):
+
+class ModifiedDict(typing.Dict[str, typing.Any]):
+
+    def __init__(self, *args: typing.Any, **kwargs: typing.Any) -> None: 
         super().__init__(*args, **kwargs)
         self.modify = False
         self.invalid = False
 
-    def __setitem__(self, key, value):
+    def __setitem__(self, key: str, value: typing.Any) -> None:
         super().__setitem__(key, value)
         self.modify = True
 
-    def __delitem__(self, key):
+    def __delitem__(self, key: str) -> None:
         super().__delitem__(key)
         self.modify = True
 
-    def clear(self):
+    def clear(self) -> None:
         super().clear()
         self.modify = True
 
-    def pop(self, key, default=None):
+    def pop(self, key: str, default: typing.Any = None) -> typing.Any:
         value = super().pop(key, default)
         self.modify = True
         return value
 
-    def popitem(self):
+    def popitem(self) -> typing.Any:
         value = super().popitem()
         self.modify = True
         return value
 
-    def setdefault(self, key, default=None):
+    def setdefault(self, key: str, default: typing.Any = None) -> typing.Any:
         value = super().setdefault(key, default)
         self.modify = True
         return value
 
-    def update(self, *args, **kwargs):
+    def update(self, *args: typing.Any, **kwargs: typing.Any) -> None:
         super().update(*args, **kwargs)
         self.modify = True
 
@@ -74,9 +76,9 @@ class SessionMiddleware:
         if domain is not None:
             self.security_flags += f"; domain={domain}"
 
-    #Decode and validate cookie
-    def decode_cookie(self, cookie: bytes) -> typing.Dict[str, typing.Any]:
-        result: typing.Dict[str, typing.Any] = ModifiedDict()
+    # Decode and validate cookie
+    def decode_cookie(self, cookie: bytes) -> ModifiedDict:
+        result: ModifiedDict = ModifiedDict()
         try:
             data = self.signer.unsign(
                 cookie, max_age=self.max_age, return_timestamp=True
@@ -85,14 +87,17 @@ class SessionMiddleware:
         except (BadSignature, SignatureExpired):
             result.invalid = True
             return result
-        
-        #data[1] is the datetime when signed from itsdangerous
+
+        # data[1] is the datetime when signed from itsdangerous
         expiration = data[1] + timedelta(seconds=self.max_age)  # type: ignore[arg-type]
         if self.refresh_window:
             now = datetime.now(timezone.utc)
 
             # The cookie is with in the refresh window, trigger a refresh.
-            if now >= (expiration - timedelta(seconds=self.refresh_window)) and now <= expiration:  # noqa E501
+            if (
+                now >= (expiration - timedelta(seconds=self.refresh_window))
+                and now <= expiration
+            ):  # noqa E501
                 result.modify = True
         return result
 
@@ -102,21 +107,23 @@ class SessionMiddleware:
             return
 
         connection = HTTPConnection(scope)
-        
+
         if self.session_cookie in connection.cookies:
             scope["session"] = self.decode_cookie(
-                connection.cookies[self.session_cookie].encode("utf-8")                
+                connection.cookies[self.session_cookie].encode("utf-8")
             )  # noqa E501
         else:
             scope["session"] = ModifiedDict()
 
         async def send_wrapper(message: Message) -> None:
             if message["type"] == "http.response.start":
-                if scope["session"] and not scope["session"].invalid: #Scope has session data and is valid.
-                    if scope["session"].modify: #Scope has updated data or needs refreshing.
+                if (scope["session"] and not scope["session"].invalid): 
+                    # Scope has session data and is valid.
+                    if scope["session"].modify:  
+                        # Scope has updated data or needs refreshing.
                         data = b64encode(json.dumps(scope["session"]).encode("utf-8"))
                         data = self.signer.sign(data)
-                        print (datetime.now(timezone.utc))
+                        print(datetime.now(timezone.utc))
                         headers = MutableHeaders(scope=message)
                         header_value = "{session_cookie}={data}; path={path}; {max_age}{security_flags}".format(  # noqa E501
                             session_cookie=self.session_cookie,
@@ -126,8 +133,8 @@ class SessionMiddleware:
                             security_flags=self.security_flags,
                         )
                         headers.append("Set-Cookie", header_value)
-                #if the session cookie is invalid for any reason, it needs to be cleared.
-                elif scope['session'].invalid: #Clear the cookie.
+                # if the session cookie is invalid for any reason
+                elif scope["session"].invalid:  # Clear the cookie.
                     headers = MutableHeaders(scope=message)
                     header_value = "{session_cookie}={data}; path={path}; {max_age}{security_flags}".format(  # noqa E501
                         session_cookie=self.session_cookie,
@@ -137,6 +144,8 @@ class SessionMiddleware:
                         security_flags=self.security_flags,
                     )
                     headers.append("Set-Cookie", header_value)
-                #No session cookie was present, or it isn't modified, don't modify or delete the cookie.
+                # No session cookie was present, or it isn't modified,
+                # don't modify or delete the cookie.
             await send(message)
+
         await self.app(scope, receive, send_wrapper)
